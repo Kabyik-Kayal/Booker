@@ -11,12 +11,15 @@ from PIL import Image
 import io
 import tkinter as tk
 from tkinter import font
-import textwrap
+from functools import lru_cache
 import database
 
 
 class ReaderPage(ctk.CTkFrame):
     """Book reader with authentic two-page spread layout."""
+    
+    # Cache for font metrics
+    _font_cache = {}
     
     def __init__(self, parent, on_back):
         super().__init__(parent, fg_color=("#F5F5F7", "#1C1C1E"))
@@ -33,6 +36,12 @@ class ReaderPage(ctk.CTkFrame):
         
         # Store structured content (paragraphs) instead of raw text string
         self.structured_content = []
+        
+        # Image cache for EPUB images
+        self._image_cache = {}
+        
+        # PDF page cache for rendered pages
+        self._pdf_page_cache = {}
         
         self._create_widgets()
         self.bind("<Configure>", self._on_resize)
@@ -382,9 +391,8 @@ class ReaderPage(ctk.CTkFrame):
                         img = Image.open(io.BytesIO(img_data))
                         img = img.convert('RGB')  # Ensure compatible format
                         image_map[item_name] = img
-                        print(f"Extracted image: {item_name} ({media_type})")
-                    except Exception as e:
-                        print(f"Failed to load image {item_name}: {e}")
+                    except Exception:
+                        pass  # Skip failed images
             
             # Extract content with image references
             for item in book.get_items():
@@ -416,7 +424,8 @@ class ReaderPage(ctk.CTkFrame):
                                         'image': img_obj,
                                         'is_header': False
                                     })
-                                    print(f"Added image: {img_filename}")
+                                    # Cache the image
+                                    self._image_cache[img_filename] = img_obj
                         elif element.name == 'svg':
                             # Skip SVG for now
                             continue
@@ -432,26 +441,30 @@ class ReaderPage(ctk.CTkFrame):
                                     'is_header': is_header
                                 })
             
-            print(f"Loaded {len(self.structured_content)} content items")
-            print(f"Found {len(image_map)} images in EPUB")
-            
             # Ensure window is updated before calculating pagination
             self.update_idletasks()
             self._repaginate_epub()
             
         except Exception as e:
-            print(f"Error loading EPUB: {e}")
-            import traceback
-            traceback.print_exc()
             self.pages = [[{'type': 'text', 'text': f"Error loading EPUB:\n{str(e)}"}]]
             self.total_pages = 1
     
+    def _get_font(self, font_family, font_size, is_header=False):
+        """Get or create a cached font object."""
+        cache_key = (font_family, font_size, is_header)
+        if cache_key not in self._font_cache:
+            self._font_cache[cache_key] = font.Font(
+                family=font_family, 
+                size=font_size + (4 if is_header else 0),
+                weight="bold" if is_header else "normal"
+            )
+        return self._font_cache[cache_key]
+    
     def _measure_text_height(self, text, font_family, font_size, width, is_header=False):
         """
-        Estimate height of text wrapped to a specific width using font metrics.
+        Estimate height of text wrapped to a specific width using cached font metrics.
         """
-        f = font.Font(family=font_family, size=font_size + (4 if is_header else 0), 
-                     weight="bold" if is_header else "normal")
+        f = self._get_font(font_family, font_size, is_header)
         
         # Line height in pixels
         line_height = f.metrics('linespace')
@@ -516,7 +529,7 @@ class ReaderPage(ctk.CTkFrame):
                 else:
                     # Paragraph too long, split it by lines
                     remaining_text = text
-                    f = font.Font(family=self.font_family, size=self.font_size + (4 if is_header else 0))
+                    f = self._get_font(self.font_family, self.font_size, is_header)
                     line_height = f.metrics('linespace')
                     
                     while remaining_text:
@@ -583,6 +596,9 @@ class ReaderPage(ctk.CTkFrame):
         self.left_pdf_image.pack(fill="both", expand=True)
         self.right_pdf_image.pack(fill="both", expand=True)
         
+        # Clear cache when loading a new PDF
+        self._pdf_page_cache.clear()
+        
         try:
             if self.pdf_doc:
                 self.pdf_doc.close()
@@ -591,7 +607,7 @@ class ReaderPage(ctk.CTkFrame):
             self.total_pages = self.pdf_doc.page_count
             self.pages = list(range(self.total_pages))
             
-        except Exception as e:
+        except Exception:
             self.total_pages = 0
             self.pages = []
         
@@ -695,8 +711,8 @@ class ReaderPage(ctk.CTkFrame):
                     img_label._ctk_image = ctk_img  # Keep reference
                     img_label.pack(pady=20)
                     widget_list.append(img_label)
-                except Exception as e:
-                    print(f"Error displaying image: {e}")
+                except Exception:
+                    pass  # Skip image display errors
     
     def _show_pdf_spread(self):
         """Show PDF page spread."""
@@ -724,7 +740,15 @@ class ReaderPage(ctk.CTkFrame):
             self.right_page_num.configure(text="")
     
     def _render_pdf_page(self, page_num: int, label: ctk.CTkLabel, max_width: int, max_height: int):
-        """Render a PDF page to a label."""
+        """Render a PDF page to a label with caching."""
+        # Check cache first
+        cache_key = (page_num, max_width, max_height)
+        if cache_key in self._pdf_page_cache:
+            photo = self._pdf_page_cache[cache_key]
+            label.configure(image=photo)
+            label.image = photo
+            return
+        
         page = self.pdf_doc[page_num]
         
         # Calculate scale to fit
@@ -743,6 +767,12 @@ class ReaderPage(ctk.CTkFrame):
             dark_image=img,
             size=(int(rect.width * scale), int(rect.height * scale))
         )
+        
+        # Cache the rendered page (limit cache size to 20 pages)
+        if len(self._pdf_page_cache) > 20:
+            # Remove oldest entry
+            self._pdf_page_cache.pop(next(iter(self._pdf_page_cache)))
+        self._pdf_page_cache[cache_key] = photo
         
         label.configure(image=photo)
         label.image = photo  # Keep reference

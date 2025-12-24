@@ -237,16 +237,41 @@ class StorePage(ctk.CTkScrollableFrame):
         description = book.get_metadata('DC', 'description')
         description = description[0][0] if description else ""
         
-        # Extract cover image
+        # Extract cover image using multiple methods
         cover_image = None
+        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+        
+        # Method 1: Look for item with 'cover' in name
         for item in book.get_items():
-            if item.get_type() == 9:  # IMAGE type
-                if 'cover' in item.get_name().lower():
+            item_name = (item.get_name() or '').lower()
+            media_type = item.media_type or ''
+            
+            # Check if it's an image
+            is_image = media_type.startswith('image/') or item_name.endswith(image_extensions)
+            
+            if is_image and 'cover' in item_name:
+                try:
                     cover_image = item.get_content()
                     break
+                except Exception:
+                    pass
         
-        # Count pages (chapters)
-        total_pages = len(list(book.get_items_of_type(9)))
+        # Method 2: If no cover found, look for first image with 'cover' in any attribute
+        if cover_image is None:
+            for item in book.get_items():
+                media_type = item.media_type or ''
+                if media_type.startswith('image/'):
+                    try:
+                        cover_image = item.get_content()
+                        break  # Use first image as fallback cover
+                    except Exception:
+                        pass
+        
+        # Count chapters (document items)
+        total_pages = 0
+        for item in book.get_items():
+            if item.get_type() == 9:  # DOCUMENT type
+                total_pages += 1
         if total_pages == 0:
             total_pages = len(list(book.get_items()))
         

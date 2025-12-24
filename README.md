@@ -118,6 +118,40 @@ Booker/
 
 ---
 
+## 📦 Building from Source
+
+Build Booker as a standalone Windows executable (.exe) that can be installed and run like any desktop application.
+
+### Prerequisites
+- Python 3.8+
+- All dependencies installed (`pip install -r requirements.txt`)
+
+### Build Steps
+
+1. **Run the build script**
+   ```bash
+   build.bat
+   ```
+   Or manually:
+   ```bash
+   pip install pyinstaller>=6.0.0
+   pyinstaller booker.spec --clean
+   ```
+
+2. **Find your executable**
+   ```
+   dist/Booker/Booker.exe
+   ```
+
+3. **Distribute**
+   - Zip the entire `dist/Booker/` folder for sharing
+   - Or create an installer using [Inno Setup](https://jrsoftware.org/isinfo.php) or [NSIS](https://nsis.sourceforge.io/)
+
+> **Note**: The `dist/Booker/` folder contains all required dependencies. Keep all files together when distributing.
+
+
+---
+
 ## 🤝 Contributing
 
 Contributions are welcome! Feel free to:

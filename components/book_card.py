@@ -108,12 +108,12 @@ class BookCard(ctk.CTkFrame):
                 size=(self.width - 4, self.height - 4)
             )
             
-            cover_label = ctk.CTkLabel(
+            self.cover_label = ctk.CTkLabel(
                 self.cover_frame,
                 image=self.cover_photo,
                 text=""
             )
-            cover_label.pack(expand=True)
+            self.cover_label.pack(expand=True)
         except Exception:
             self._create_placeholder_cover()
     
@@ -138,17 +138,26 @@ class BookCard(ctk.CTkFrame):
         file_type = self.book_data.get("file_type", "epub").upper()
         icon = "📖" if file_type == "EPUB" else "📄"
         
-        placeholder = ctk.CTkLabel(
+        self.cover_label = ctk.CTkLabel(
             self.cover_frame,
             text=f"{icon}\n\n{file_type}",
             font=ctk.CTkFont(size=24),
             text_color=("#1D1D1F", "#F5F5F7")
         )
-        placeholder.pack(expand=True)
+        self.cover_label.pack(expand=True)
     
     def _bind_events(self):
-        """Bind hover and click events."""
+        """Bind hover and click events to all widgets."""
         widgets = [self, self.cover_frame, self.title_label, self.author_label]
+        
+        # Add cover label if it exists
+        if hasattr(self, 'cover_label'):
+            widgets.append(self.cover_label)
+        
+        # Also bind to all children of cover_frame
+        for child in self.cover_frame.winfo_children():
+            if child not in widgets:
+                widgets.append(child)
         
         for widget in widgets:
             widget.bind("<Enter>", self._on_enter)

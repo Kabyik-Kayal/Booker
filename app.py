@@ -95,8 +95,11 @@ class AppleBooksApp(ctk.CTk):
     
     def _show_collection(self, collection_id: str):
         """Show a collection view."""
-        # For now, navigate to library with filter
+        # Navigate to library with collection filter
         self._navigate("library")
+        # Set the collection filter on the library page
+        if "library" in self.pages:
+            self.pages["library"].set_collection(collection_id)
     
     def _open_book(self, book_data: dict):
         """Open a book in the reader."""

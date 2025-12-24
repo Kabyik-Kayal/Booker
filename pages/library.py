@@ -15,7 +15,9 @@ class LibraryPage(ctk.CTkScrollableFrame):
         super().__init__(parent, fg_color="transparent")
         self.on_open_book = on_open_book
         self.current_filter = "all"
+        self.current_collection = None  # None = all books
         self.search_query = ""
+        self._search_job = None  # For debouncing
         
         self._create_widgets()
     
@@ -25,13 +27,13 @@ class LibraryPage(ctk.CTkScrollableFrame):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=30, pady=(30, 20))
         
-        title = ctk.CTkLabel(
+        self.title_label = ctk.CTkLabel(
             header,
             text="Library",
             font=ctk.CTkFont(family="Segoe UI", size=32, weight="bold"),
             text_color=("#1D1D1F", "#F5F5F7")
         )
-        title.pack(side="left")
+        self.title_label.pack(side="left")
         
         # Search bar
         self.search_entry = ctk.CTkEntry(
@@ -80,19 +82,45 @@ class LibraryPage(ctk.CTkScrollableFrame):
         
         self._load_books()
     
+    def set_collection(self, collection_id: str):
+        """Set the current collection filter."""
+        self.current_collection = collection_id
+        self.current_filter = "all"  # Reset file type filter
+        
+        # Update title based on collection
+        titles = {
+            "favorites": "❤️ Favorites",
+            "want_to_read": "📌 Want to Read",
+            "finished": "✅ Finished"
+        }
+        self.title_label.configure(text=titles.get(collection_id, "Library"))
+        
+        # Update filter button states
+        for fid, btn in self.filter_buttons.items():
+            btn.configure(fg_color="transparent")
+        self.filter_buttons["all"].configure(fg_color=("#007AFF", "#0A84FF"))
+        
+        self._load_books()
+    
     def _load_books(self):
         """Load and display books."""
         # Clear existing
         for widget in self.grid_container.winfo_children():
             widget.destroy()
         
-        # Get books
+        # Get books based on collection
         if self.search_query:
             books = database.search_books(self.search_query)
+        elif self.current_collection == "favorites":
+            books = database.get_favorites()
+        elif self.current_collection == "want_to_read":
+            books = database.get_want_to_read()
+        elif self.current_collection == "finished":
+            books = database.get_finished()
         else:
             books = database.get_all_books()
         
-        # Apply filter
+        # Apply file type filter
         if self.current_filter == "epub":
             books = [b for b in books if b["file_type"].lower() == "epub"]
         elif self.current_filter == "pdf":
@@ -103,14 +131,31 @@ class LibraryPage(ctk.CTkScrollableFrame):
             empty_frame = ctk.CTkFrame(self.grid_container, fg_color="transparent")
             empty_frame.pack(expand=True, pady=100)
             
+            # Different icons for different collections
+            icons = {
+                "favorites": "❤️",
+                "want_to_read": "📌",
+                "finished": "✅"
+            }
             empty_icon = ctk.CTkLabel(
                 empty_frame,
-                text="📚",
+                text=icons.get(self.current_collection, "📚"),
                 font=ctk.CTkFont(size=64)
             )
             empty_icon.pack(pady=(0, 20))
             
-            message = "No books found" if self.search_query else "Your library is empty"
+            # Different messages for different collections
+            if self.search_query:
+                message = "No books found"
+            elif self.current_collection == "favorites":
+                message = "No favorite books yet"
+            elif self.current_collection == "want_to_read":
+                message = "No books in your reading list"
+            elif self.current_collection == "finished":
+                message = "No finished books yet"
+            else:
+                message = "Your library is empty"
+                
             empty_text = ctk.CTkLabel(
                 empty_frame,
                 text=message,
@@ -119,7 +164,7 @@ class LibraryPage(ctk.CTkScrollableFrame):
             )
             empty_text.pack()
             
-            if not self.search_query:
+            if not self.search_query and not self.current_collection:
                 hint = ctk.CTkLabel(
                     empty_frame,
                     text="Go to Book Store to import your books",
@@ -147,7 +192,16 @@ class LibraryPage(ctk.CTkScrollableFrame):
             card.grid(row=(i // 5) + 1, column=i % 5, padx=10, pady=10, sticky="nw")
     
     def _on_search(self, event):
-        """Handle search input."""
+        """Handle search input with debouncing."""
+        # Cancel previous search job
+        if self._search_job:
+            self.after_cancel(self._search_job)
+        
+        # Schedule new search after 300ms
+        self._search_job = self.after(300, self._perform_search)
+    
+    def _perform_search(self):
+        """Actually perform the search."""
         self.search_query = self.search_entry.get().strip()
         self._load_books()
     
@@ -166,4 +220,7 @@ class LibraryPage(ctk.CTkScrollableFrame):
     
     def refresh(self):
         """Refresh the page."""
+        # Reset to all books when refreshing
+        self.current_collection = None
+        self.title_label.configure(text="Library")
         self._load_books()
