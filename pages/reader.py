@@ -12,6 +12,7 @@ import io
 import tkinter as tk
 from tkinter import font
 from functools import lru_cache
+import webbrowser
 import database
 
 
@@ -22,7 +23,7 @@ class ReaderPage(ctk.CTkFrame):
     _font_cache = {}
     
     def __init__(self, parent, on_back):
-        super().__init__(parent, fg_color=("#F5F5F7", "#1C1C1E"))
+        super().__init__(parent, fg_color=("#FAFAFA", "#1C1C1E"))
         self.on_back = on_back
         self.book_data = None
         self.current_page = 0
@@ -37,6 +38,10 @@ class ReaderPage(ctk.CTkFrame):
         # Store structured content (paragraphs) instead of raw text string
         self.structured_content = []
         
+        # Table of Contents data
+        self.toc_entries = []  # List of {title, page_index}
+        self.toc_visible = False
+        
         # Image cache for EPUB images
         self._image_cache = {}
         
@@ -48,11 +53,11 @@ class ReaderPage(ctk.CTkFrame):
     
     def _create_widgets(self):
         """Create reader widgets."""
-        # Top toolbar
+        # Top toolbar - seamless design
         self.toolbar = ctk.CTkFrame(
             self,
-            height=56,
-            fg_color=("#FFFFFF", "#2C2C2E"),
+            height=52,
+            fg_color=("#FAFAFA", "#1C1C1E"),
             corner_radius=0
         )
         self.toolbar.pack(fill="x")
@@ -84,6 +89,21 @@ class ReaderPage(ctk.CTkFrame):
         # Right side controls
         controls = ctk.CTkFrame(self.toolbar, fg_color="transparent")
         controls.pack(side="right", padx=20)
+        
+        # Index/TOC button
+        self.toc_btn = ctk.CTkButton(
+            controls,
+            text="☰",
+            width=36,
+            height=36,
+            font=ctk.CTkFont(size=18),
+            fg_color="transparent",
+            text_color=("#007AFF", "#0A84FF"),
+            hover_color=("#E8E8ED", "#3A3A3C"),
+            corner_radius=8,
+            command=self._toggle_toc
+        )
+        self.toc_btn.pack(side="left", padx=(0, 10))
         
         # Font size controls
         font_smaller = ctk.CTkButton(
@@ -128,83 +148,125 @@ class ReaderPage(ctk.CTkFrame):
         )
         self.fav_btn.pack(side="left", padx=(10, 0))
         
-        # Main book area - matches app background
+        # Main book area - clean seamless background
         self.book_container = ctk.CTkFrame(
             self,
-            fg_color=("#F5F5F7", "#1C1C1E"),
+            fg_color=("#FAFAFA", "#1C1C1E"),
             corner_radius=0
         )
         self.book_container.pack(fill="both", expand=True)
         
-        # Book spread (two pages side by side)
+        # Table of Contents Panel (hidden by default)
+        self.toc_panel = ctk.CTkFrame(
+            self.book_container,
+            width=280,
+            fg_color=("#FFFFFF", "#2C2C2E"),
+            corner_radius=0
+        )
+        # Don't pack yet - will be shown/hidden with _toggle_toc
+        
+        # TOC Header
+        toc_header = ctk.CTkFrame(self.toc_panel, fg_color="transparent", height=50)
+        toc_header.pack(fill="x", padx=16, pady=(16, 8))
+        toc_header.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            toc_header,
+            text="Contents",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=("#1D1D1F", "#F5F5F7")
+        ).pack(side="left", pady=10)
+        
+        # Close button for TOC
+        ctk.CTkButton(
+            toc_header,
+            text="✕",
+            width=30,
+            height=30,
+            font=ctk.CTkFont(size=14),
+            fg_color="transparent",
+            text_color=("#8E8E93", "#8E8E93"),
+            hover_color=("#E5E5EA", "#3A3A3C"),
+            corner_radius=15,
+            command=self._toggle_toc
+        ).pack(side="right")
+        
+        # Scrollable TOC list
+        self.toc_scrollable = ctk.CTkScrollableFrame(
+            self.toc_panel,
+            fg_color="transparent",
+            scrollbar_button_color=("#D1D1D6", "#48484A"),
+            scrollbar_button_hover_color=("#B0B0B5", "#5A5A5C")
+        )
+        self.toc_scrollable.pack(fill="both", expand=True, padx=8, pady=(0, 16))
+        
+        # Book spread (two pages side by side) - no gaps
         self.book_spread = ctk.CTkFrame(
             self.book_container,
             fg_color="transparent"
         )
-        self.book_spread.pack(expand=True, fill="both", padx=5, pady=5)
+        self.book_spread.pack(expand=True, fill="both", padx=0, pady=0)
         
-        # Left page
+        # Left page - clean borderless design
         self.left_page_frame = ctk.CTkFrame(
             self.book_spread,
-            fg_color=("#FFFEF9", "#1E1E1E"),
+            fg_color=("#FFFFFF", "#1E1E1E"),
             corner_radius=0,
-            border_width=1,
-            border_color=("#D1CCC5", "#3A3A3C")
+            border_width=0
         )
-        self.left_page_frame.pack(side="left", padx=(0, 2))
-        self.left_page_frame.pack_propagate(False) # Prevent resizing
+        self.left_page_frame.pack(side="left", fill="both", expand=True)
+        self.left_page_frame.pack_propagate(False)
         
-        # Content area for mixed text/images (no scrolling)
+        # Content area for mixed text/images
         self.left_page_content = ctk.CTkFrame(
             self.left_page_frame,
             fg_color="transparent"
         )
-        self.left_page_content.pack(fill="both", expand=True, padx=25, pady=20)
-        self.left_content_widgets = []  # Track widgets for cleanup
+        self.left_page_content.pack(fill="both", expand=True, padx=40, pady=24)
+        self.left_content_widgets = []
         
         self.left_page_num = ctk.CTkLabel(
             self.left_page_frame,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=("#86868B", "#86868B")
+            text_color=("#98989D", "#6E6E73")
         )
-        self.left_page_num.pack(side="bottom", pady=(0, 15))
+        self.left_page_num.pack(side="bottom", pady=(0, 20))
         
-        # Center spine
-        spine = ctk.CTkFrame(
+        # Subtle center divider
+        self.spine = ctk.CTkFrame(
             self.book_spread,
-            width=8,
-            fg_color=("#C5C0B8", "#3A3530"),
+            width=1,
+            fg_color=("#E5E5EA", "#38383A"),
             corner_radius=0
         )
-        spine.pack(side="left", fill="y")
+        self.spine.pack(side="left", fill="y", pady=30)
         
-        # Right page
+        # Right page - clean borderless design
         self.right_page_frame = ctk.CTkFrame(
             self.book_spread,
-            fg_color=("#FFFEF9", "#1E1E1E"),
+            fg_color=("#FFFFFF", "#1E1E1E"),
             corner_radius=0,
-            border_width=1,
-            border_color=("#D1CCC5", "#3A3A3C")
+            border_width=0
         )
-        self.right_page_frame.pack(side="left", padx=(2, 0))
+        self.right_page_frame.pack(side="left", fill="both", expand=True)
         self.right_page_frame.pack_propagate(False)
         
-        # Content area for mixed text/images (no scrolling)
+        # Content area for mixed text/images
         self.right_page_content = ctk.CTkFrame(
             self.right_page_frame,
             fg_color="transparent"
         )
-        self.right_page_content.pack(fill="both", expand=True, padx=25, pady=20)
-        self.right_content_widgets = []  # Track widgets for cleanup
+        self.right_page_content.pack(fill="both", expand=True, padx=40, pady=24)
+        self.right_content_widgets = []
         
         self.right_page_num = ctk.CTkLabel(
             self.right_page_frame,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=("#86868B", "#86868B")
+            text_color=("#98989D", "#6E6E73")
         )
-        self.right_page_num.pack(side="bottom", pady=(0, 15))
+        self.right_page_num.pack(side="bottom", pady=(0, 20))
         
         # PDF image labels (hidden by default)
         self.left_pdf_image = ctk.CTkLabel(
@@ -216,11 +278,11 @@ class ReaderPage(ctk.CTkFrame):
             text=""
         )
         
-        # Bottom navigation bar
+        # Bottom navigation bar - minimal seamless design
         self.nav_bar = ctk.CTkFrame(
             self,
-            height=70,
-            fg_color=("#FFFFFF", "#2C2C2E"),
+            height=64,
+            fg_color=("#FAFAFA", "#1C1C1E"),
             corner_radius=0
         )
         self.nav_bar.pack(fill="x", side="bottom")
@@ -229,37 +291,37 @@ class ReaderPage(ctk.CTkFrame):
         nav_content = ctk.CTkFrame(self.nav_bar, fg_color="transparent")
         nav_content.pack(expand=True)
         
-        # Previous button
+        # Previous button - subtle rounded style
         self.prev_btn = ctk.CTkButton(
             nav_content,
-            text="◀",
-            width=50,
-            height=40,
-            font=ctk.CTkFont(size=20),
-            fg_color=("#E8E8ED", "#3A3A3C"),
-            text_color=("#1D1D1F", "#F5F5F7"),
-            hover_color=("#D1D1D6", "#4A4A4C"),
-            corner_radius=10,
+            text="‹",
+            width=44,
+            height=44,
+            font=ctk.CTkFont(size=28),
+            fg_color="transparent",
+            text_color=("#8E8E93", "#8E8E93"),
+            hover_color=("#E5E5EA", "#38383A"),
+            corner_radius=22,
             command=self._prev_page
         )
-        self.prev_btn.pack(side="left", padx=15)
+        self.prev_btn.pack(side="left", padx=20)
         
         # Progress container
         progress_frame = ctk.CTkFrame(nav_content, fg_color="transparent")
         progress_frame.pack(side="left", padx=20)
         
-        # Progress slider
+        # Progress slider - minimal thin design
         self.progress_slider = ctk.CTkSlider(
             progress_frame,
-            width=500,
-            height=20,
+            width=480,
+            height=16,
             from_=0,
             to=100,
             number_of_steps=100,
-            progress_color=("#007AFF", "#0A84FF"),
+            progress_color=("#FF9500", "#FF9F0A"),
             button_color=("#FFFFFF", "#FFFFFF"),
-            button_hover_color=("#E8E8ED", "#E8E8ED"),
-            fg_color=("#E8E8ED", "#3A3A3C"),
+            button_hover_color=("#F5F5F5", "#E8E8E8"),
+            fg_color=("#E5E5EA", "#38383A"),
             command=self._on_slider_change
         )
         self.progress_slider.pack()
@@ -274,20 +336,20 @@ class ReaderPage(ctk.CTkFrame):
         )
         self.page_label.pack(pady=(5, 0))
         
-        # Next button
+        # Next button - subtle rounded style
         self.next_btn = ctk.CTkButton(
             nav_content,
-            text="▶",
-            width=50,
-            height=40,
-            font=ctk.CTkFont(size=20),
-            fg_color=("#E8E8ED", "#3A3A3C"),
-            text_color=("#1D1D1F", "#F5F5F7"),
-            hover_color=("#D1D1D6", "#4A4A4C"),
-            corner_radius=10,
+            text="›",
+            width=44,
+            height=44,
+            font=ctk.CTkFont(size=28),
+            fg_color="transparent",
+            text_color=("#8E8E93", "#8E8E93"),
+            hover_color=("#E5E5EA", "#38383A"),
+            corner_radius=22,
             command=self._next_page
         )
-        self.next_btn.pack(side="left", padx=15)
+        self.next_btn.pack(side="left", padx=20)
         
         # Make the frame focusable for keyboard bindings
         self.book_container.bind("<Button-1>", lambda e: self.focus_set())
@@ -361,8 +423,8 @@ class ReaderPage(ctk.CTkFrame):
     def _load_epub(self, file_path: str):
         """Load EPUB content with images."""
         # Show EPUB content areas, hide PDF image areas
-        self.left_page_content.pack(fill="both", expand=True, padx=20, pady=15)
-        self.right_page_content.pack(fill="both", expand=True, padx=20, pady=15)
+        self.left_page_content.pack(fill="both", expand=True, padx=40, pady=24)
+        self.right_page_content.pack(fill="both", expand=True, padx=40, pady=24)
         self.left_pdf_image.pack_forget()
         self.right_pdf_image.pack_forget()
         
@@ -401,7 +463,7 @@ class ReaderPage(ctk.CTkFrame):
                     soup = BeautifulSoup(content, 'html.parser')
                     
                     # Process all elements in order
-                    for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'img', 'image', 'svg']):
+                    for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'image', 'svg', 'a']):
                         if element.name in ['img', 'image']:
                             # Handle image - try multiple src attributes
                             img_src = element.get('src', '') or element.get('xlink:href', '') or element.get('href', '')
@@ -429,21 +491,55 @@ class ReaderPage(ctk.CTkFrame):
                         elif element.name == 'svg':
                             # Skip SVG for now
                             continue
+                        elif element.name == 'a':
+                            # Handle links - standalone links with text
+                            href = element.get('href', '')
+                            link_text = element.get_text(strip=True)
+                            if link_text and href and href.startswith(('http://', 'https://')):
+                                if link_text not in seen_texts:
+                                    seen_texts.add(link_text)
+                                    self.structured_content.append({
+                                        'type': 'link',
+                                        'text': link_text,
+                                        'url': href,
+                                        'is_header': False,
+                                        'header_level': 0
+                                    })
                         else:
-                            # Handle text
+                            # Handle text (p, h1-h6)
                             text = element.get_text(strip=True)
                             if text and text not in seen_texts:
                                 seen_texts.add(text)
-                                is_header = element.name in ['h1', 'h2', 'h3', 'h4']
+                                is_header = element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+                                # Extract header level (1-6) for TOC hierarchy
+                                header_level = int(element.name[1]) if is_header else 0
+                                
+                                # Check for embedded links in this element
+                                links = []
+                                for link in element.find_all('a'):
+                                    link_href = link.get('href', '')
+                                    link_text = link.get_text(strip=True)
+                                    if link_href and link_text:
+                                        links.append({'text': link_text, 'url': link_href})
+                                
                                 self.structured_content.append({
                                     'type': 'text',
                                     'text': text,
-                                    'is_header': is_header
+                                    'is_header': is_header,
+                                    'header_level': header_level,
+                                    'links': links
                                 })
+            
+            # Extract TOC from EPUB
+            self._extract_toc_from_epub(book)
             
             # Ensure window is updated before calculating pagination
             self.update_idletasks()
             self._repaginate_epub()
+            
+            # Update TOC page indices with actual pages and populate
+            self._update_toc_page_indices()
+            self._populate_toc()
             
         except Exception as e:
             self.pages = [[{'type': 'text', 'text': f"Error loading EPUB:\n{str(e)}"}]]
@@ -667,6 +763,25 @@ class ReaderPage(ctk.CTkFrame):
             if item['type'] == 'text':
                 text = item['text']
                 is_header = item.get('is_header', False)
+                header_level = item.get('header_level', 0)
+                
+                # Calculate font size and style based on header level
+                if is_header:
+                    # h1 = largest, h6 = smallest
+                    size_map = {1: 10, 2: 6, 3: 4, 4: 2, 5: 1, 6: 0}
+                    font_size_delta = size_map.get(header_level, 0)
+                    font_weight = "bold"
+                    # h1/h2 = dark, h3+ = slightly lighter
+                    if header_level <= 2:
+                        text_color = ("#1D1D1F", "#F5F5F7")
+                    else:
+                        text_color = ("#48484A", "#C7C7CC")
+                    spacing = 16 if header_level <= 2 else 12
+                else:
+                    font_size_delta = 0
+                    font_weight = "normal"
+                    text_color = ("#1D1D1F", "#F5F5F7")
+                    spacing = 10
                 
                 # Create text label with improved formatting
                 text_label = ctk.CTkLabel(
@@ -674,18 +789,36 @@ class ReaderPage(ctk.CTkFrame):
                     text=text,
                     font=ctk.CTkFont(
                         family=self.font_family, 
-                        size=self.font_size + (4 if is_header else 0),
-                        weight="bold" if is_header else "normal"
+                        size=self.font_size + font_size_delta,
+                        weight=font_weight
                     ),
-                    text_color=("#1D1D1F", "#F5F5F7"),
+                    text_color=text_color,
                     wraplength=wrap_width,
                     justify="left",
                     anchor="nw"
                 )
-                # Tight spacing matching pagination
-                spacing = 10
                 text_label.pack(fill="x", anchor="w", pady=(0, spacing))
                 widget_list.append(text_label)
+                
+            elif item['type'] == 'link':
+                # Standalone clickable link
+                link_text = item.get('text', 'Link')
+                link_url = item.get('url', '')
+                
+                link_btn = ctk.CTkButton(
+                    container,
+                    text=f"🔗 {link_text}",
+                    anchor="w",
+                    height=32,
+                    font=ctk.CTkFont(family=self.font_family, size=self.font_size - 1),
+                    fg_color="transparent",
+                    text_color=("#007AFF", "#0A84FF"),
+                    hover_color=("#E5F1FF", "#1C3A5F"),
+                    corner_radius=6,
+                    command=lambda url=link_url: self._open_link(url)
+                )
+                link_btn.pack(fill="x", anchor="w", pady=(0, 8))
+                widget_list.append(link_btn)
                 
             elif item['type'] == 'image':
                 try:
@@ -875,9 +1008,273 @@ class ReaderPage(ctk.CTkFrame):
             self.fav_btn.configure(text="❤️" if is_fav else "♡")
             self.book_data["is_favorite"] = 1 if is_fav else 0
     
+    def _open_link(self, url):
+        """Open a link in the system's default web browser."""
+        if url:
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass  # Silently handle errors
+    
     def _on_back(self):
         """Handle back button."""
         if self.pdf_doc:
             self.pdf_doc.close()
             self.pdf_doc = None
         self.on_back()
+    
+    def _toggle_toc(self):
+        """Toggle the Table of Contents panel visibility."""
+        if self.toc_visible:
+            self.toc_panel.pack_forget()
+            self.toc_visible = False
+        else:
+            # Show TOC on the left side
+            self.toc_panel.pack(side="left", fill="y", before=self.book_spread)
+            self.toc_panel.pack_propagate(False)
+            self.toc_visible = True
+    
+    def _populate_toc(self):
+        """Populate the TOC panel with chapter entries."""
+        # Clear existing entries
+        for widget in self.toc_scrollable.winfo_children():
+            widget.destroy()
+        
+        # Track expanded state for sections
+        if not hasattr(self, '_toc_expanded'):
+            self._toc_expanded = {}
+        
+        if not self.toc_entries:
+            # No TOC found message
+            ctk.CTkLabel(
+                self.toc_scrollable,
+                text="No chapters found",
+                font=ctk.CTkFont(size=13),
+                text_color=("#8E8E93", "#8E8E93")
+            ).pack(pady=20)
+            return
+        
+        # Create hierarchical TOC with dropdowns
+        self._create_toc_items(self.toc_entries, self.toc_scrollable, 0)
+    
+    def _create_toc_items(self, entries, parent, depth):
+        """Recursively create TOC items with collapsible children."""
+        for i, entry in enumerate(entries):
+            title = entry.get('title', f'Chapter {i + 1}')
+            page_idx = entry.get('page_index', 0)
+            children = entry.get('children', [])
+            entry_id = f"{depth}_{i}_{title[:20]}"
+            
+            # Container for this item and its children
+            item_container = ctk.CTkFrame(parent, fg_color="transparent")
+            item_container.pack(fill="x")
+            
+            # Calculate indent
+            indent = 16 * depth
+            
+            # Row frame for the item
+            row_frame = ctk.CTkFrame(item_container, fg_color="transparent")
+            row_frame.pack(fill="x", padx=(indent, 0))
+            
+            if children:
+                # This item has children - add expand/collapse toggle
+                is_expanded = self._toc_expanded.get(entry_id, False)
+                toggle_text = "▼" if is_expanded else "▶"
+                
+                toggle_btn = ctk.CTkButton(
+                    row_frame,
+                    text=toggle_text,
+                    width=24,
+                    height=24,
+                    font=ctk.CTkFont(size=10),
+                    fg_color="transparent",
+                    text_color=("#8E8E93", "#8E8E93"),
+                    hover_color=("#E5E5EA", "#38383A"),
+                    corner_radius=4,
+                    command=lambda eid=entry_id, cont=item_container, ch=children, d=depth: 
+                        self._toggle_toc_section(eid, cont, ch, d)
+                )
+                toggle_btn.pack(side="left", padx=(4, 0))
+            else:
+                # Spacer for alignment
+                spacer = ctk.CTkFrame(row_frame, width=28, height=24, fg_color="transparent")
+                spacer.pack(side="left")
+            
+            # Truncate long titles
+            max_len = 32 - (depth * 3)
+            display_title = title[:max_len] + "..." if len(title) > max_len + 3 else title
+            
+            # Title button
+            title_btn = ctk.CTkButton(
+                row_frame,
+                text=display_title,
+                anchor="w",
+                height=36,
+                font=ctk.CTkFont(size=14, weight="bold" if depth == 0 else "normal"),
+                fg_color="transparent",
+                text_color=("#1D1D1F", "#F5F5F7") if depth == 0 else ("#48484A", "#AEAEB2"),
+                hover_color=("#E5E5EA", "#38383A"),
+                corner_radius=8,
+                command=lambda idx=page_idx: self._navigate_to_chapter(idx)
+            )
+            title_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            
+            # Children container (hidden by default)
+            if children:
+                children_frame = ctk.CTkFrame(item_container, fg_color="transparent")
+                children_frame._toc_children = True  # Mark for identification
+                
+                if self._toc_expanded.get(entry_id, False):
+                    children_frame.pack(fill="x")
+                    self._create_toc_items(children, children_frame, depth + 1)
+    
+    def _toggle_toc_section(self, entry_id, container, children, depth):
+        """Toggle a TOC section expanded/collapsed."""
+        is_expanded = self._toc_expanded.get(entry_id, False)
+        self._toc_expanded[entry_id] = not is_expanded
+        
+        # Rebuild the TOC to reflect changes
+        self._populate_toc()
+    
+    def _navigate_to_chapter(self, page_index):
+        """Navigate to a specific chapter/page."""
+        # Convert page index to spread index
+        spread_index = page_index // 2
+        
+        if self.file_type == "epub":
+            max_spread = (len(self.pages) + 1) // 2 - 1
+        else:
+            max_spread = (self.total_pages + 1) // 2 - 1
+        
+        self.current_page = min(spread_index, max(0, max_spread))
+        self._show_current_spread()
+        
+        # Close TOC panel after navigation
+        if self.toc_visible:
+            self._toggle_toc()
+    
+    def _extract_toc_from_epub(self, book):
+        """Extract table of contents from EPUB."""
+        self.toc_entries = []
+        
+        try:
+            # Try to get TOC from EPUB
+            toc = book.toc
+            if toc:
+                self._parse_toc_items(toc)
+        except Exception:
+            pass
+        
+        # If no TOC found, generate from headers
+        if not self.toc_entries:
+            self._generate_toc_from_headers()
+    
+    def _parse_toc_items(self, toc_items, depth=0):
+        """Recursively parse TOC items into hierarchical structure."""
+        result = []
+        for item in toc_items:
+            if isinstance(item, tuple):
+                # Nested TOC (section, children)
+                section, children = item
+                if hasattr(section, 'title'):
+                    entry = {
+                        'title': section.title,
+                        'page_index': len(self.toc_entries),
+                        'depth': depth,
+                        'children': []
+                    }
+                    self.toc_entries.append(entry)
+                    if children:
+                        entry['children'] = self._parse_toc_items(children, depth + 1)
+            elif hasattr(item, 'title'):
+                entry = {
+                    'title': item.title,
+                    'page_index': len(self.toc_entries),
+                    'depth': depth,
+                    'children': []
+                }
+                self.toc_entries.append(entry)
+        return result
+    
+    def _generate_toc_from_headers(self):
+        """Generate TOC from h1/h2/h3/h4 headers in content with hierarchy."""
+        current_page = 0
+        items_on_page = 0
+        
+        # Track hierarchy: h1 > h2 > h3 > h4
+        current_h1 = None
+        current_h2 = None
+        current_h3 = None
+        
+        for i, item in enumerate(self.structured_content):
+            if item['type'] == 'text' and item.get('is_header', False):
+                text = item['text']
+                header_level = item.get('header_level', 2)
+                
+                # Only include reasonably sized headers
+                if len(text) < 80:
+                    entry = {
+                        'title': text,
+                        'page_index': current_page,
+                        'depth': 0,
+                        'children': []
+                    }
+                    
+                    # Determine hierarchy based on header level
+                    if header_level == 1:
+                        self.toc_entries.append(entry)
+                        current_h1 = entry
+                        current_h2 = None
+                        current_h3 = None
+                    elif header_level == 2:
+                        entry['depth'] = 1
+                        if current_h1:
+                            current_h1['children'].append(entry)
+                        else:
+                            self.toc_entries.append(entry)
+                        current_h2 = entry
+                        current_h3 = None
+                    elif header_level == 3:
+                        entry['depth'] = 2
+                        if current_h2:
+                            current_h2['children'].append(entry)
+                        elif current_h1:
+                            current_h1['children'].append(entry)
+                        else:
+                            self.toc_entries.append(entry)
+                        current_h3 = entry
+                    else:  # h4
+                        entry['depth'] = 3
+                        if current_h3:
+                            current_h3['children'].append(entry)
+                        elif current_h2:
+                            current_h2['children'].append(entry)
+                        elif current_h1:
+                            current_h1['children'].append(entry)
+                        else:
+                            self.toc_entries.append(entry)
+            
+            # Rough page estimation (will be refined after pagination)
+            items_on_page += 1
+            if items_on_page > 8:
+                current_page += 1
+                items_on_page = 0
+    
+    def _update_toc_page_indices(self):
+        """Update TOC entries with actual page indices after pagination."""
+        if not self.toc_entries or not self.pages:
+            return
+        
+        # Build a map of header text to page index
+        header_to_page = {}
+        for page_idx, page_items in enumerate(self.pages):
+            for item in page_items:
+                if item['type'] == 'text' and item.get('is_header', False):
+                    header_to_page[item['text']] = page_idx
+        
+        # Update TOC entries with correct page indices
+        for entry in self.toc_entries:
+            title = entry['title'].strip()
+            if title in header_to_page:
+                entry['page_index'] = header_to_page[title]
+
