@@ -463,7 +463,7 @@ class ReaderPage(ctk.CTkFrame):
                     soup = BeautifulSoup(content, 'html.parser')
                     
                     # Process all elements in order
-                    for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'image', 'svg', 'a']):
+                    for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'img', 'image', 'svg', 'a']):
                         if element.name in ['img', 'image']:
                             # Handle image - try multiple src attributes
                             img_src = element.get('src', '') or element.get('xlink:href', '') or element.get('href', '')
@@ -492,7 +492,12 @@ class ReaderPage(ctk.CTkFrame):
                             # Skip SVG for now
                             continue
                         elif element.name == 'a':
-                            # Handle links - standalone links with text
+                            # Check if this link is already handled by a parent block element
+                            # If parent is a block tag we already capture, skip this independent 'a' processing
+                            if element.parent.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li']:
+                                continue
+                            
+                            # Handle links - standalone links with text (not inside p/h/li)
                             href = element.get('href', '')
                             link_text = element.get_text(strip=True)
                             if link_text and href and href.startswith(('http://', 'https://')):
@@ -506,8 +511,13 @@ class ReaderPage(ctk.CTkFrame):
                                         'header_level': 0
                                     })
                         else:
-                            # Handle text (p, h1-h6)
+                            # Handle text (p, h1-h6, li)
                             text = element.get_text(strip=True)
+                            
+                            # Add bullet for list items
+                            if element.name == 'li':
+                                text = "• " + text
+                                
                             if text and text not in seen_texts:
                                 seen_texts.add(text)
                                 is_header = element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
@@ -614,8 +624,23 @@ class ReaderPage(ctk.CTkFrame):
                     current_page_items.append(item)
                     current_height += img_h
                     
+            elif item.get('type') == 'link':
+                # Standalone link
+                link_h = 40
+                if current_height + link_h > available_height and current_page_items:
+                    self.pages.append(current_page_items)
+                    current_page_items = [item]
+                    current_height = link_h
+                else:
+                    current_page_items.append(item)
+                    current_height += link_h
+                    
             elif item['type'] == 'text':
                 text = item['text']
+                is_header = item.get('is_header', False)
+                header_level = item.get('header_level', 0)
+                links = item.get('links', [])
+                
                 h = self._measure_text_height(text, self.font_family, self.font_size, wrap_width, is_header)
                 
                 if current_height + h + p_spacing <= available_height:
@@ -651,7 +676,9 @@ class ReaderPage(ctk.CTkFrame):
                             current_page_items.append({
                                 'type': 'text',
                                 'text': remaining_text,
-                                'is_header': is_header
+                                'is_header': is_header,
+                                'header_level': header_level,
+                                'links': links # Pass links to all chunks (renderer will filter)
                             })
                             current_height += chunk_h + p_spacing
                             remaining_text = ""
@@ -667,7 +694,9 @@ class ReaderPage(ctk.CTkFrame):
                                 current_page_items.append({
                                     'type': 'text',
                                     'text': page_chunk,
-                                    'is_header': is_header
+                                    'is_header': is_header,
+                                    'header_level': header_level,
+                                    'links': links # Pass links to all chunks
                                 })
                                 current_height += chunk_h + p_spacing
                             
@@ -764,6 +793,7 @@ class ReaderPage(ctk.CTkFrame):
                 text = item['text']
                 is_header = item.get('is_header', False)
                 header_level = item.get('header_level', 0)
+                links = item.get('links', [])
                 
                 # Calculate font size and style based on header level
                 if is_header:
@@ -783,24 +813,71 @@ class ReaderPage(ctk.CTkFrame):
                     text_color = ("#1D1D1F", "#F5F5F7")
                     spacing = 10
                 
-                # Create text label with improved formatting
-                text_label = ctk.CTkLabel(
+                # Estimate height for textbox
+                h = self._measure_text_height(text, self.font_family, self.font_size, wrap_width, is_header)
+                # Add buffer for textbox padding/rendering differences
+                h += 10
+                
+                # Create Textbox for rich text support
+                textbox = ctk.CTkTextbox(
                     container,
-                    text=text,
+                    height=h,
                     font=ctk.CTkFont(
                         family=self.font_family, 
                         size=self.font_size + font_size_delta,
                         weight=font_weight
                     ),
                     text_color=text_color,
-                    wraplength=wrap_width,
-                    justify="left",
-                    anchor="nw"
+                    fg_color="transparent",
+                    wrap="word",
+                    activate_scrollbars=False,
+                    padx=0,
+                    pady=0,
+                    border_width=0
                 )
-                text_label.pack(fill="x", anchor="w", pady=(0, spacing))
-                widget_list.append(text_label)
+                textbox.pack(fill="x", anchor="w", pady=(0, spacing))
                 
-            elif item['type'] == 'link':
+                # Insert text
+                textbox.insert("1.0", text)
+                
+                # Apply link tags if any
+                if links:
+                    start_index = "1.0"
+                    for i, link in enumerate(links):
+                        link_text = link['text']
+                        link_url = link['url']
+                        
+                        # Find link text starting from last position
+                        # exact=True not supported? searching for string
+                        pos = textbox.search(link_text, start_index, stopindex="end")
+                        
+                        if pos:
+                            # Calculate end position
+                            # Only tag the first occurrence found after start_index
+                            length = len(link_text)
+                            # Tkinter text indices are "line.char"
+                            # We can use "count" to move index but getting end index is needed for tag_add
+                            end_pos = f"{pos}+{length}c"
+                            
+                            tag_name = f"link_{i}"
+                            textbox.tag_add(tag_name, pos, end_pos)
+                            textbox.tag_config(tag_name, foreground="#007AFF" if ctk.get_appearance_mode()=="Light" else "#0A84FF", underline=True)
+                            
+                            # Bind events
+                            # Use closure default arg to capture current url
+                            textbox.tag_bind(tag_name, "<Button-1>", lambda e, url=link_url: self._open_link(url))
+                            textbox.tag_bind(tag_name, "<Enter>", lambda e: textbox.configure(cursor="hand2"))
+                            textbox.tag_bind(tag_name, "<Leave>", lambda e: textbox.configure(cursor="arrow"))
+                            
+                            # Update start index to avoid re-tagging same text if it appears again for a different link
+                            # +1 char to move past
+                            start_index = end_pos
+                
+                # Make read-only after inserting content
+                textbox.configure(state="disabled")
+                widget_list.append(textbox)
+                
+            elif item.get('type') == 'link':
                 # Standalone clickable link
                 link_text = item.get('text', 'Link')
                 link_url = item.get('url', '')
